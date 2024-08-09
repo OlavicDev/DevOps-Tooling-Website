@@ -61,207 +61,289 @@ From where and how frequently will the data be accessed?
 By addressing these questions, you will be equipped to select the most suitable storage system for your solution.
 
 
-### Step 1: Prepare the NFS Server (RHEL 9)
+## Step 1 - Prepare the NFS Server
 
-1. **Launch an EC2 instance with RHEL 9**.
-   - Create an EC2 instance with RHEL 9 as the operating system.
-   - Ensure that the instance is in the same VPC as your web and database servers for network connectivity.
+1. **Launch an EC2 Instance with RHEL OS**
 
-2. **Configure Logical Volume Management (LVM)**.
-   - Attach three new EBS volumes (each 10GB) to the instance.
-   - Connect to the instance via SSH:
-     ```bash
-     ssh -i "my-devec2key.pem" ec2-user@<NFS_SERVER_IP>
-     ```
-   - Use `lsblk` to list block devices and verify that the new EBS volumes are recognized.
-   - Create partitions on each disk using `gdisk`:
-     ```bash
-     sudo gdisk /dev/xvdf
-     sudo gdisk /dev/xvdg
-     sudo gdisk /dev/xvdh
-     ```
-   - Install `lvm2` package and create physical volumes (PVs):
-     ```bash
-     sudo yum install lvm2 -y
-     sudo pvcreate /dev/xvdf1 /dev/xvdg1 /dev/xvdh1
-     ```
-   - Create a volume group (VG) named `webdata-vg` and add the PVs:
-     ```bash
-     sudo vgcreate webdata-vg /dev/xvdf1 /dev/xvdg1 /dev/xvdh1
-     ```
-   - Create logical volumes (LVs) for apps, logs, and opt:
-     ```bash
-     sudo lvcreate -n lv-apps -L 9G webdata-vg
-     sudo lvcreate -n lv-logs -L 9G webdata-vg
-     sudo lvcreate -n lv-opt -L 9G webdata-vg
-     ```
-   - Format the LVs with the `xfs` filesystem:
-     ```bash
-     sudo mkfs -t xfs /dev/webdata-vg/lv-apps
-     sudo mkfs -t xfs /dev/webdata-vg/lv-logs
-     sudo mkfs -t xfs /dev/webdata-vg/lv-opt
-     ```
-   - Create mount points and mount the LVs:
-     ```bash
-     sudo mkdir /mnt/apps /mnt/logs /mnt/opt
-     sudo mount /dev/webdata-vg/lv-apps /mnt/apps
-     sudo mount /dev/webdata-vg/lv-logs /mnt/logs
-     sudo mount /dev/webdata-vg/lv-opt /mnt/opt
-     ```
+   - Begin by launching an EC2 instance running the Red Hat Enterprise Linux (RHEL) operating system.
+   - Configure Logical Volume Management (LVM) on the server:
+     - Format the LVM as XFS.
+     - Create three Logical Volumes: `lv-opt`, `lv-apps`, and `lv-logs`.
+   - Create mount points in the `/mnt` directory for the logical volumes as follows:
+     - Mount `lv-apps` to `/mnt/apps` (to be utilized by web servers).
+     - Mount `lv-logs` to `/mnt/logs` (to be used for storing web server logs).
+     - Mount `lv-opt` to `/mnt/opt` (this will be used by the Jenkins server in the next project).
+   - Create three volumes, each with a capacity of 10GB, in the same Availability Zone (AZ) as the NFS Server EC2 instance. Attach these volumes one by one to the NFS Server.
+![image](https://github.com/user-attachments/assets/4d2ea5df-f45c-4321-b7b6-15b8537937ed)
 
-3. **Install and configure the NFS server**.
-   - Install NFS utilities and start the NFS server:
-     ```bash
-     sudo yum update -y
-     sudo yum install nfs-utils -y
-     sudo systemctl start nfs-server.service
-     sudo systemctl enable nfs-server.service
-     ```
-   - Set permissions for the mounted directories:
-     ```bash
-     sudo chown -R nobody: /mnt/apps /mnt/logs /mnt/opt
-     sudo chmod -R 777 /mnt/apps /mnt/logs /mnt/opt
-     sudo systemctl restart nfs-server.service
-     ```
-   - Configure `/etc/exports` to allow access from the web server subnet:
-     ```bash
-     sudo vi /etc/exports
+2. **Initiate NFS Server Configuration**
 
-     /mnt/apps 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
-     /mnt/logs 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
-     /mnt/opt 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
+   - Open the Linux terminal to begin configuration:
+   ```
+   ssh -i "yourkey.pem" ec2-user@<NFS-Server-IP>
+   ```
+   - Use the `lsblk` command to inspect the block devices attached to the server. In Linux, all devices reside in the `/dev/` directory. Use `ls /dev/` to verify that all three newly created devices are present. Their names are likely to be `xvdf`, `xvdg`, and `xvdh`.
+   ![image](https://github.com/user-attachments/assets/8c9647c0-6a6a-447b-82cc-815573f5152d)
 
-     sudo exportfs -arv
-     ```
-   - Open necessary ports in the security group: TCP 111, UDP 111, UDP 2049, NFS 2049.
+   - Utilize the `gdisk` utility to create a single partition on each of the three disks:
+   ```
+   sudo gdisk /dev/xvdf
+   sudo gdisk /dev/xvdg
+   sudo gdisk /dev/xvdh
+   ```
+   ![image](https://github.com/user-attachments/assets/dcaa2559-4ca6-4d63-a617-d3b9d7f92f73)
 
-### Step 2: Configure the Database Server (Ubuntu Linux)
+   - After partitioning, view the newly configured partitions on each of the three disks using the `lsblk` command.
+    ![image](https://github.com/user-attachments/assets/7f2d5d6a-c6ef-4811-9c4b-de78d25a3009)
 
-1. **Launch an EC2 instance with Ubuntu Linux**.
-   - Create an EC2 instance with Ubuntu Linux as the operating system.
-   - Ensure it is in the same VPC and subnet as the NFS and web servers.
+   - Install the LVM package:
+   ```
+   sudo yum install lvm2 -y
+   ```
+   ![image](https://github.com/user-attachments/assets/8320eab8-f1ac-4071-a09b-13b7420dce9e)
 
-2. **Install MySQL Server**.
-   - Connect to the instance via SSH:
-     ```bash
-     ssh -i "my-devec2key.pem" ubuntu@<DB_SERVER_IP>
-     ```
-   - Update the system and install MySQL server:
-     ```bash
-     sudo apt update && sudo apt upgrade -y
-     sudo apt install mysql-server -y
-     ```
-   - Secure the MySQL installation:
-     ```bash
-     sudo mysql_secure_installation
-     ```
+   - Use the `pvcreate` utility to designate each of the three disks as Physical Volumes (PVs) for use by LVM. Confirm that the volumes have been successfully created:
+   ```
+   sudo pvcreate /dev/xvdf1 /dev/xvdg1 /dev/xvdh1
+   sudo pvs
+   ```
+   - Utilize the `vgcreate` utility to add all three PVs to a Volume Group (VG) named `webdata-vg`. Verify that the VG has been successfully created:
+   ```
+   sudo vgcreate webdata-vg /dev/xvdf1 /dev/xvdg1 /dev/xvdh1
+   sudo vgs
+   ```
+   ![image](https://github.com/user-attachments/assets/ed03ce0e-8618-4717-b458-653d5cabe006)
 
-3. **Configure the MySQL database**.
-   - Access the MySQL shell and create the `tooling` database:
-     ```sql
-     sudo mysql
+   - Create three logical volumes named `lv-apps`, `lv-logs`, and `lv-opt` using the `lvcreate` utility. Verify the creation of the logical volumes:
+   ```
+   sudo lvcreate -n lv-apps -L 9G webdata-vg
+   sudo lvcreate -n lv-logs -L 9G webdata-vg
+   sudo lvcreate -n lv-opt -L 9G webdata-vg
+   sudo lvs
+   ```
+   - Verify the entire setup:
+   ```
+   sudo vgdisplay -v   # view complete setup, VG, PV, and LV
+   lsblk
+   ```
+   ![image](https://github.com/user-attachments/assets/cdf85328-6464-4e8b-9647-4a0bf71ec6cc)
 
-     CREATE DATABASE tooling;
-     CREATE USER 'webaccess'@'172.31.0.0/20' IDENTIFIED WITH mysql_native_password BY 'Admin123$';
-     GRANT ALL PRIVILEGES ON tooling.* TO 'webaccess'@'172.31.0.0/20' WITH GRANT OPTION;
-     FLUSH PRIVILEGES;
-     exit;
-     ```
-   - Update the MySQL configuration to allow connections from the web server subnet by setting the bind address:
-     ```bash
-     sudo vi /etc/mysql/mysql.conf.d/mysqld.cnf
-     # Set the bind address to 0.0.0.0 or the server's private IP
+   - Format the logical volumes using `mkfs -t xfs` instead of the ext4 filesystem:
+   ```
+   sudo mkfs -t xfs /dev/webdata-vg/lv-apps
+   sudo mkfs -t xfs /dev/webdata-vg/lv-logs
+   sudo mkfs -t xfs /dev/webdata-vg/lv-opt
+   ```
+   ![image](https://github.com/user-attachments/assets/38fdba59-bbb8-4f48-8784-f240acfafb4a)
 
-     sudo systemctl restart mysql
-     ```
+   - Create mount points in the `/mnt` directory:
+   ```
+   sudo mkdir /mnt/apps
+   sudo mkdir /mnt/logs
+   sudo mkdir /mnt/opt
+   sudo mount /dev/webdata-vg/lv-apps /mnt/apps
+   sudo mount /dev/webdata-vg/lv-logs /mnt/logs
+   sudo mount /dev/webdata-vg/lv-opt /mnt/opt
+   ```
 
-4. **Open MySQL port 3306**.
-   - Configure the security group to allow inbound traffic on port 3306 from the web server subnet.
+3. **Install and Configure the NFS Server**
 
-### Step 3: Prepare the Web Servers (RHEL 9)
+   - Install the NFS Server and configure it to start on reboot. Ensure that it is up and running:
+   ```
+   sudo yum update -y
+   sudo yum install nfs-utils -y
+   sudo systemctl start nfs-server.service
+   sudo systemctl enable nfs-server.service
+   sudo systemctl status nfs-server.service
+   ```
+   ![image](https://github.com/user-attachments/assets/c592de50-e09e-4a0f-af1e-93eadf11f4f8)
 
-1. **Launch three EC2 instances with RHEL 9**.
-   - Create three EC2 instances, each with RHEL 9, to act as web servers.
-   - Ensure these instances are in the same VPC and subnet as the NFS and database servers.
+   - Export the mounts to allow Webservers' subnet CIDR (IPv4 CIDR) to connect as clients. For simplicity, all three Web Servers are installed in the same subnet. However, in a production setup, each tier should be separated within its own subnet for higher security.
+   - Set up permissions to allow the Web Servers to read, write, and execute files on NFS:
+   ```
+   sudo chown -R nobody: /mnt/apps
+   sudo chown -R nobody: /mnt/logs
+   sudo chown -R nobody: /mnt/opt
+   sudo chmod -R 777 /mnt/apps
+   sudo chmod -R 777 /mnt/logs
+   sudo chmod -R 777 /mnt/opt
+   sudo systemctl restart nfs-server.service
+   ```
+   - Configure access to NFS for clients within the same subnet (example Subnet CIDR: 172.31.32.0/20):
+   ```
+   sudo vi /etc/exports
+   ```
+   - Add the following lines to `/etc/exports`:
+   ```
+   /mnt/apps 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
+   /mnt/logs 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
+   /mnt/opt 172.31.0.0/20(rw,sync,no_all_squash,no_root_squash)
+   ```
+   - Apply the exports using `exportfs`:
+   ```
+   sudo exportfs -arv
+   ```
+   - Identify the port used by NFS and open it using the security group (add a new inbound rule):
+   ```
+   rpcinfo -p | grep nfs
+   ```
+   ![image](https://github.com/user-attachments/assets/959fd9e0-f8b1-4f65-aa02-e84f323eab6f)
 
-2. **Install NFS client on all web servers**.
-   - Connect to each instance via SSH and install the NFS client:
-     ```bash
-     sudo yum install nfs-utils nfs4-acl-tools -y
-     ```
-   - Mount the NFS export for apps:
-     ```bash
-     sudo mkdir /var/www
-     sudo mount -t nfs -o rw,nosuid <NFS_SERVER_PRIVATE_IP>:/mnt/apps /var/www
-     ```
-   - Verify the NFS mount and ensure persistence after reboot:
-     ```bash
-     sudo vi /etc/fstab
+   - Note: For the NFS Server to be accessible from the client, the following ports must be opened: TCP 111, UDP 111, UDP 2049, and NFS 2049. Set the Web Server subnet CIDR as the source.
 
-     <NFS_SERVER_PRIVATE_IP>:/mnt/apps /var/www nfs defaults 0 0
-     ```
+---
 
-3. **Install Apache and PHP**.
-   - Install Apache and PHP with required modules:
-     ```bash
-     sudo yum install httpd -y
-     sudo dnf install https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm
-     sudo dnf install dnf-utils http://rpms.remirepo.net/enterprise/remi-release-9.rpm
-     sudo dnf module reset php
-     sudo dnf module enable php:remi-8.2
-     sudo dnf install php php-opcache php-gd php-curl php-mysqlnd
-     ```
-   - Start and enable Apache and PHP services:
-     ```bash
-     sudo systemctl start php-fpm
-     sudo systemctl enable php-fpm
-     sudo systemctl start httpd
-     sudo systemctl enable httpd
-     ```
+### Step 2 - Configure the Database Server
 
-4. **Mount Apache logs to NFS**.
-   - Mount the Apache logs directory to the NFS export for logs:
-     ```bash
-     sudo mkdir /var/log/httpd
-     sudo mount -t nfs -o rw,nosuid <NFS_SERVER_PRIVATE_IP>:/mnt/logs /var/log/httpd
-     sudo vi /etc/fstab
+1. **Launch an Ubuntu EC2 Instance for the Database Server**
 
-     <NFS_SERVER_PRIVATE_IP>:/mnt/logs /var/log/httpd nfs defaults 0 0
-     ```
+   - Launch a new EC2 instance running Ubuntu, which will serve as the Database (DB) Server.
+   - Access the instance to begin configuration:
+   ```
+   ssh -i "yourkey.pem" ubuntu@<DB-Server-IP>
+   ```
+   - Update and upgrade the Ubuntu instance:
+   ```
+   sudo apt update && sudo apt upgrade -y
+   ```
 
-5. **Deploy the Tooling Application**.
-   - Fork the repository from GitHub and clone it into the web server's `/var/www/html` directory:
-     ```bash
-     sudo yum install git -y
-     cd /var/www/html
-     git clone https://github.com/yourusername/tooling.git .
-     ```
-   - Ensure that the necessary permissions are set for the `html` folder and its contents.
+2. **Install MySQL Server**
 
-6. **Configure the application to connect to the database**.
-   - Update the `functions.php` file with the correct database connection details:
-     ```bash
-     sudo vi /var/www/html/functions.php
-     ```
-   - Execute the `tooling-db.sql` script to populate the database:
-     ```bash
-     sudo mysql -h <DB_SERVER
+   - Install the MySQL Server package:
+   ```
+   sudo apt install mysql-server -y
+   ```
+   - Run the MySQL secure installation script to secure the MySQL installation:
+   ```
+   sudo mysql_secure_installation
+   ```
+   ![image](https://github.com/user-attachments/assets/c18c4230-c06e-4198-ace2-55ddb6824af2)
+   ![image](https://github.com/user-attachments/assets/0aba51d0-2f5c-4526-99b3-4f7a4e6d392e)
 
-_PRIVATE_IP> -u webaccess -p tooling < /var/www/html/tooling-db.sql
-     ```
 
-### Step 4: Load Balancer Configuration (Optional)
 
-1. **Create an Elastic Load Balancer (ELB)**.
-   - Go to the AWS Management Console, navigate to EC2, and create an Application Load Balancer.
-   - Add the three web servers to the ELB target group.
-   - Associate the ELB with the web servers' security group and allow HTTP/HTTPS traffic.
+4. **Create the Database and Configure User Access**
 
-2. **Test the Setup**.
-   - Access the application via the load balancer’s DNS name:
-     ```bash
-     http://<ELB_DNS_NAME>
-     ```
+   - Create a database named `tooling` and a database user named `webaccess`:
+   ```
+   sudo mysql
+   CREATE DATABASE tooling;
+   CREATE USER 'webaccess'@'172.31.0.0/20' IDENTIFIED WITH mysql_native_password BY 'Admin123$';
+   GRANT ALL PRIVILEGES ON tooling.* TO 'webaccess'@'172.31.0.0/20' WITH GRANT OPTION;
+   FLUSH PRIVILEGES;
+   exit;
+   ```
+   ![image](https://github.com/user-attachments/assets/4665734b-501c-4d6f-b6a4-b2055d850d00)
+
+   - Configure MySQL to allow remote connections by setting the bind address and then restart MySQL:
+   ```
+   sudo vi /etc/mysql/mysql.conf.d/mysqld.cnf
+   ```
+   - Restart the MySQL service:
+   ```
+   sudo systemctl restart mysql
+   sudo systemctl status mysql
+   ```
+   ![image](https://github.com/user-attachments/assets/2394a624-7f62-424d-93cc-3c7d6e47e140)
+
+   - Open MySQL port 3306 on the DB Server EC2 instance. Access to the DB Server is restricted to the subnet CIDR configured as the source.
+
+---
+
+### Step 3 - Prepare the Web Servers
+
+To ensure that the Web Servers can serve the same content from a shared storage solution (NFS) and a single MySQL database, the following steps were undertaken:
+
+1. **Launch EC2 Instances for Web Servers (RHEL OS)**
+
+   - Launch a new EC2 instance with the RHEL operating system for each Web
+
+ Server.
+
+2. **Install the NFS Client on Each Web Server**
+
+   - Install the NFS client package and mount the NFS server export directory to `/var/www/`:
+   ```
+   sudo yum install nfs-utils nfs4-acl-tools -y
+   sudo mkdir /var/www
+   sudo mount -t nfs -o rw,nosuid <NFS-Server-Private-IP>:/mnt/apps /var/www
+   ```
+   - Ensure that the mount persists by adding it to `/etc/fstab`:
+   ```
+   <NFS-Server-Private-IP>:/mnt/apps /var/www nfs defaults 0 0
+   ```
+
+3. **Install Apache, PHP, and Required Packages**
+
+   - Install Apache and PHP packages, including the necessary extensions:
+   ```
+   sudo yum install httpd -y
+   ```
+   ![image](https://github.com/user-attachments/assets/3e6a8ffd-4be8-4746-a883-26d0b7d16cec)
+
+   ```
+   sudo systemctl enable httpd
+   sudo systemctl start httpd
+   ```
+   
+   ```
+   sudo dnf install https://rpms.remirepo.net/enterprise/remi-release-9.rpm
+   ```
+   ![image](https://github.com/user-attachments/assets/15729276-bcf4-4194-8f5d-2e64e6102359)
+
+   ```
+   sudo dnf module reset php
+   sudo dnf module enable php:remi-8.2
+   ```
+   ![image](https://github.com/user-attachments/assets/52b9ae8d-e5dd-40c9-83f6-80a1f76a1012)
+
+   ```
+   sudo dnf install php php-opcache php-gd php-curl php-mysqlnd
+   sudo systemctl start php-fpm
+   sudo systemctl enable php-fpm
+   sudo setsebool -P httpd_execmem 1
+   ```
+   ![image](https://github.com/user-attachments/assets/b957bf94-0309-4375-b075-e90b470345ab)
+
+**REPEAT THE PROCESS FOR THE REMAINING TWO WEB SERVERS**
+
+5. **Deploy the Tooling Website**
+
+   - Fork the repository and clone it to the Web Server. Deploy the code to `/var/www/html`:
+  
+   ![image](https://github.com/user-attachments/assets/22c630ac-1dc9-4053-8b3c-acb56f4c4c87)
+
+   ```
+   git clone https://github.com/<your-username>/tooling.git
+   sudo cp -R tooling/html/. /var/www/html/
+   sudo vi /var/www/html/functions.php
+   ```
+   - Update the MySQL database connection settings in `functions.php`:
+   ```
+   <?php
+   define('DB_SERVER', ' <DB-Server-Private-IP> ');
+   define('DB_USERNAME', 'webaccess');
+   define('DB_PASSWORD', 'Admin123$');
+   define('DB_DATABASE', 'tooling');
+   $db = mysqli_connect(DB_SERVER,DB_USERNAME,DB_PASSWORD,DB_DATABASE);
+   ?>
+   ```
+   - Create an inbound rule in the Web Server Security Group allowing HTTP and HTTPS traffic from any IP address, and another rule allowing MySQL connection from Web Server Subnet CIDR.
+
+6. **Final Steps and Verification**
+
+   - Test the Tooling website by accessing it from a browser using the Web Server's public IP address:
+   ```
+   http://<Web-Server-Public-IP-1-or-2>/index.php
+   ```
+   ![image](https://github.com/user-attachments/assets/5f9b5b36-b158-4dd6-beeb-fd6ec489694e)
+   ![image](https://github.com/user-attachments/assets/e06349b3-a394-4150-aba4-15039eaffe20)
+
+
+   - Verify that Apache is running properly on both Web Servers, and that the application can connect to the MySQL database. Check logs to ensure everything is functioning as expected:
+   ```
+   sudo tail -f /var/log/httpd/error_log
+   ```
 
 
 ## Project Overview
